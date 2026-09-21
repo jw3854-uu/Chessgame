@@ -76,6 +76,14 @@ text = "Round: 0"
 layout_mode = 2
 text = "Phase: -"
 
+[node name="WarningLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+visible = false
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.35, 0.15, 1)
+theme_override_font_sizes/font_size = 14
+autowrap_mode = 3
+text = ""
+
 [node name="Sep1" type="HSeparator" parent="BattleUI/Root/RightPanel/Margin/VBox"]
 layout_mode = 2
 
@@ -83,6 +91,13 @@ layout_mode = 2
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "Boss HP: -"
+
+[node name="BossEnrageLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+visible = false
+layout_mode = 2
+theme_override_colors/font_color = Color(1, 0.25, 0.2, 1)
+autowrap_mode = 3
+text = ""
 
 [node name="BossCurrentLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
 layout_mode = 2

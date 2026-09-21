@@ -8,6 +8,9 @@ enum StancePhase {
 
 var stance: StancePhase = StancePhase.PHASE_A
 var anchor_cell: Vector2i = Vector2i.ZERO
+var enraged: bool = false
+## Round 4 SPECIAL uses PHASE_B immunity but distinct telegraph/action.
+var is_overload_action: bool = false
 
 
 func setup_boss(anchor: Vector2i) -> void:
@@ -16,7 +19,10 @@ func setup_boss(anchor: Vector2i) -> void:
 	anchor_cell = anchor
 	grid_pos = anchor
 	stance = StancePhase.PHASE_A
-	setup("BOSS", "BOSS", Color(0.55, 0.15, 0.65, 1))
+	enraged = false
+	is_overload_action = false
+	move_range = BalanceConfig.BOSS_MOVE_RANGE
+	setup("BOSS", "BOSS", Color(0.08, 0.08, 0.10, 1))
 	setup_combat_stats(BalanceConfig.BOSS_MAX_HP, 0, 0, 0)
 	_apply_boss_visual()
 	_sync_boss_world_position()
@@ -24,12 +30,12 @@ func setup_boss(anchor: Vector2i) -> void:
 
 func _apply_boss_visual() -> void:
 	_ensure_nodes()
-	# Cover roughly the full 2x2 footprint.
 	var span: float = float(BalanceConfig.TILE_SIZE) * 2.0 - 8.0
 	body.offset_left = -span * 0.5
 	body.offset_top = -span * 0.5
 	body.offset_right = span * 0.5
 	body.offset_bottom = span * 0.5
+	body.color = Color(0.08, 0.08, 0.10, 1)
 	select_ring.offset_left = -span * 0.5 - 6.0
 	select_ring.offset_top = -span * 0.5 - 6.0
 	select_ring.offset_right = span * 0.5 + 6.0
@@ -41,14 +47,12 @@ func _apply_boss_visual() -> void:
 
 
 func _sync_boss_world_position() -> void:
-	# Center visually on the midpoint of the 2x2 footprint.
 	var c0 := BalanceConfig.grid_to_world_center(anchor_cell)
 	var c3 := BalanceConfig.grid_to_world_center(anchor_cell + Vector2i(1, 1))
 	position = (c0 + c3) * 0.5
 
 
 func set_grid_pos(cell: Vector2i) -> void:
-	# Stationary boss: keep anchor as logical grid_pos; ignore 1-tile centering.
 	grid_pos = cell
 	anchor_cell = cell
 	_sync_boss_world_position()
@@ -59,6 +63,7 @@ func get_occupied_cells() -> Array[Vector2i]:
 
 
 func is_immune_to_damage_type(damage_type: int) -> bool:
+	# Overload is enhanced PHASE_B: Physical immune.
 	if stance == StancePhase.PHASE_A:
 		return damage_type == 1 ## MAGICAL
 	if stance == StancePhase.PHASE_B:
@@ -82,7 +87,9 @@ func stance_name(p_stance: StancePhase = stance) -> String:
 	return "UNKNOWN"
 
 
-func stance_title(p_stance: StancePhase = stance) -> String:
+func stance_title(p_stance: StancePhase = stance, overload: bool = false) -> String:
+	if overload:
+		return "OVERLOAD"
 	match p_stance:
 		StancePhase.PHASE_A:
 			return "ANTI-MAGIC"
@@ -91,7 +98,9 @@ func stance_title(p_stance: StancePhase = stance) -> String:
 	return "UNKNOWN"
 
 
-func immunity_text(p_stance: StancePhase = stance) -> String:
+func immunity_text(p_stance: StancePhase = stance, overload: bool = false) -> String:
+	if overload:
+		return "Immune to Physical Damage"
 	match p_stance:
 		StancePhase.PHASE_A:
 			return "Immune to Magical Damage"
@@ -100,12 +109,21 @@ func immunity_text(p_stance: StancePhase = stance) -> String:
 	return ""
 
 
-func action_text(p_stance: StancePhase = stance) -> String:
+func action_text(p_stance: StancePhase = stance, overload: bool = false, p_enraged: bool = false) -> String:
+	var enrage_note := " [ENRAGED x1.5]" if p_enraged else ""
+	if overload:
+		return "OVERLOAD: 10 MAG AoE + 4 Burning + terrain destroy"
 	match p_stance:
 		StancePhase.PHASE_A:
-			return "Heavy Physical Strike (15 PHYS, adjacent)"
+			var dmg: int = BalanceConfig.BOSS_PHASE_A_DAMAGE
+			if p_enraged:
+				dmg = int(floor(float(dmg) * BalanceConfig.BOSS_ENRAGE_DAMAGE_MULT))
+			return "Heavy Physical Strike (%d PHYS, adjacent)%s" % [dmg, enrage_note]
 		StancePhase.PHASE_B:
-			return "Global Arcane Blast (8 MAG + 3 Burning)"
+			var dmg_b: int = BalanceConfig.BOSS_PHASE_B_DAMAGE
+			if p_enraged:
+				dmg_b = int(floor(float(dmg_b) * BalanceConfig.BOSS_ENRAGE_DAMAGE_MULT))
+			return "Global Arcane Blast (%d MAG + 3 Burning)%s" % [dmg_b, enrage_note]
 	return ""
 
 

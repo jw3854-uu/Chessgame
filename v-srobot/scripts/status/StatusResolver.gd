@@ -19,7 +19,8 @@ static func try_apply_burning(unit: Unit, stacks_to_add: int, grid: GridManager)
 	if stacks_to_add <= 0:
 		return result
 	result["before"] = unit.get_burning_stacks()
-	if grid != null and grid.is_water(unit.grid_pos):
+	# Boss ignores Water protection.
+	if grid != null and grid.is_water(unit.grid_pos) and not unit.is_boss:
 		result["blocked_by_water"] = true
 		result["after"] = result["before"]
 		return result

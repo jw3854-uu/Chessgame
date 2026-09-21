@@ -2,24 +2,24 @@ class_name GridManager
 extends Node2D
 
 signal cell_clicked(cell: Vector2i)
+signal terrain_changed
 
 enum TerrainType {
 	NORMAL,
 	WATER,
 	COVER,
-	OBSTACLE, ## reserved; movement-blocking later
+	OBSTACLE,
 }
 
-const TILE_COLOR_A := Color(0.22, 0.24, 0.28, 1)
-const TILE_COLOR_B := Color(0.28, 0.30, 0.34, 1)
-const WATER_COLOR := Color(0.12, 0.42, 0.78, 1)
-const COVER_COLOR := Color(0.42, 0.55, 0.28, 1)
+const TILE_COLOR_A := Color(0.30, 0.32, 0.35, 1)
+const TILE_COLOR_B := Color(0.36, 0.38, 0.41, 1)
+const WATER_COLOR := Color(0.45, 0.85, 0.95, 1)
+const COVER_COLOR := Color(0.92, 0.94, 0.96, 1)
+const OBSTACLE_COLOR := Color(0.45, 0.28, 0.14, 1)
 const MOVE_HIGHLIGHT_COLOR := Color(0.25, 0.85, 0.45, 0.45)
 const ATTACK_HIGHLIGHT_COLOR := Color(0.95, 0.25, 0.2, 0.5)
 
-## Authoritative occupancy: cell -> Unit (Boss maps four cells to one Unit)
 var occupancy: Dictionary = {}
-## Authoritative terrain: cell -> TerrainType
 var terrain_by_cell: Dictionary = {}
 
 var _tiles: Dictionary = {}
@@ -36,8 +36,7 @@ func _ready() -> void:
 	_highlight_layer.name = "HighlightLayer"
 	add_child(_highlight_layer)
 	_build_grid()
-	_apply_test_water()
-	_apply_test_cover()
+	_apply_battlefield_terrain()
 
 
 func _build_grid() -> void:
@@ -55,14 +54,13 @@ func _build_grid() -> void:
 			_tiles[cell] = tile
 
 
-func _apply_test_water() -> void:
-	for cell in BalanceConfig.TEST_WATER_CELLS:
+func _apply_battlefield_terrain() -> void:
+	for cell in BalanceConfig.WATER_CELLS:
 		set_terrain(cell, TerrainType.WATER)
-
-
-func _apply_test_cover() -> void:
-	for cell in BalanceConfig.TEST_COVER_CELLS:
+	for cell in BalanceConfig.COVER_CELLS:
 		set_terrain(cell, TerrainType.COVER)
+	for cell in BalanceConfig.OBSTACLE_CELLS:
+		set_terrain(cell, TerrainType.OBSTACLE)
 
 
 func set_terrain(cell: Vector2i, terrain: TerrainType) -> void:
@@ -70,6 +68,7 @@ func set_terrain(cell: Vector2i, terrain: TerrainType) -> void:
 		return
 	terrain_by_cell[cell] = terrain
 	_refresh_tile_visual(cell)
+	terrain_changed.emit()
 
 
 func get_terrain(cell: Vector2i) -> TerrainType:
@@ -84,6 +83,10 @@ func is_cover(cell: Vector2i) -> bool:
 	return get_terrain(cell) == TerrainType.COVER
 
 
+func is_obstacle(cell: Vector2i) -> bool:
+	return get_terrain(cell) == TerrainType.OBSTACLE
+
+
 func terrain_name(cell: Vector2i) -> String:
 	match get_terrain(cell):
 		TerrainType.WATER:
@@ -96,6 +99,24 @@ func terrain_name(cell: Vector2i) -> String:
 			return "NORMAL"
 
 
+func get_cells_of_terrain(terrain: TerrainType) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	for cell in terrain_by_cell.keys():
+		if get_terrain(cell) == terrain:
+			result.append(cell)
+	return result
+
+
+func destroy_terrain_to_normal(cell: Vector2i) -> bool:
+	if not is_in_bounds(cell):
+		return false
+	var current: TerrainType = get_terrain(cell)
+	if current != TerrainType.WATER and current != TerrainType.COVER:
+		return false
+	set_terrain(cell, TerrainType.NORMAL)
+	return true
+
+
 func _refresh_tile_visual(cell: Vector2i) -> void:
 	if not _tiles.has(cell):
 		return
@@ -105,6 +126,8 @@ func _refresh_tile_visual(cell: Vector2i) -> void:
 			tile.color = WATER_COLOR
 		TerrainType.COVER:
 			tile.color = COVER_COLOR
+		TerrainType.OBSTACLE:
+			tile.color = OBSTACLE_COLOR
 		_:
 			var checker: bool = ((cell.x + cell.y) % 2) == 0
 			tile.color = TILE_COLOR_A if checker else TILE_COLOR_B
@@ -132,11 +155,20 @@ func is_occupied(cell: Vector2i) -> bool:
 	return occupancy.has(cell)
 
 
+## Walkable for 1-tile units (players / elites). Obstacles block.
+func is_walkable_cell(cell: Vector2i) -> bool:
+	if not is_in_bounds(cell):
+		return false
+	if is_obstacle(cell):
+		return false
+	return true
+
+
 func place_unit(unit: Unit, cell: Vector2i) -> bool:
 	if unit != null and unit.is_boss:
 		return place_boss(unit, cell)
-	if not is_in_bounds(cell):
-		push_error("place_unit out of bounds: %s" % cell)
+	if not is_walkable_cell(cell):
+		push_error("place_unit blocked/out of bounds: %s" % cell)
 		return false
 	if is_occupied(cell):
 		push_error("place_unit target occupied: %s" % cell)
@@ -146,15 +178,24 @@ func place_unit(unit: Unit, cell: Vector2i) -> bool:
 	return true
 
 
-func place_boss(boss: Unit, anchor: Vector2i) -> bool:
+func can_boss_occupy_anchor(boss: Unit, anchor: Vector2i) -> bool:
 	var cells: Array[Vector2i] = BalanceConfig.footprint_2x2(anchor)
 	for cell in cells:
 		if not is_in_bounds(cell):
-			push_error("place_boss out of bounds: %s" % cell)
 			return false
-		if is_occupied(cell):
-			push_error("place_boss target occupied: %s" % cell)
+		if is_obstacle(cell):
 			return false
+		var occupant: Unit = get_unit_at(cell)
+		if occupant != null and occupant != boss:
+			return false
+	return true
+
+
+func place_boss(boss: Unit, anchor: Vector2i) -> bool:
+	if not can_boss_occupy_anchor(boss, anchor):
+		push_error("place_boss invalid at %s" % anchor)
+		return false
+	var cells: Array[Vector2i] = BalanceConfig.footprint_2x2(anchor)
 	for cell in cells:
 		occupancy[cell] = boss
 	boss.set_grid_pos(anchor)
@@ -163,9 +204,8 @@ func place_boss(boss: Unit, anchor: Vector2i) -> bool:
 
 func move_unit(unit: Unit, to_cell: Vector2i) -> bool:
 	if unit != null and unit.is_boss:
-		push_warning("Boss movement is not implemented.")
-		return false
-	if not is_in_bounds(to_cell):
+		return move_boss(unit as Boss, to_cell)
+	if not is_walkable_cell(to_cell):
 		return false
 	if is_occupied(to_cell):
 		return false
@@ -176,6 +216,17 @@ func move_unit(unit: Unit, to_cell: Vector2i) -> bool:
 	occupancy[to_cell] = unit
 	unit.set_grid_pos(to_cell)
 	return true
+
+
+func move_boss(boss: Boss, new_anchor: Vector2i) -> bool:
+	if boss == null:
+		return false
+	if new_anchor == boss.anchor_cell:
+		return true
+	if not can_boss_occupy_anchor(boss, new_anchor):
+		return false
+	remove_unit(boss)
+	return place_boss(boss, new_anchor)
 
 
 func remove_unit(unit: Unit) -> void:
@@ -189,13 +240,13 @@ func remove_unit(unit: Unit) -> void:
 		occupancy.erase(cell)
 
 
-## Minimum Euclidean distance to a unit footprint (range checks only).
 func distance_to_unit(from_cell: Vector2i, unit: Unit) -> float:
 	if unit == null:
 		return INF
 	return BalanceConfig.distance_to_footprint(from_cell, unit.get_occupied_cells())
 
 
+## Cardinal BFS reachability for 1-tile units. Obstacles and foreign occupancy block.
 func get_reachable_cells(unit: Unit) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 	if unit == null:
@@ -221,13 +272,75 @@ func get_reachable_cells(unit: Unit) -> Array[Vector2i]:
 			var next: Vector2i = cell + dir
 			if visited.has(next):
 				continue
-			if not is_in_bounds(next):
+			if not is_walkable_cell(next):
 				continue
 			if is_occupied(next) and get_unit_at(next) != unit:
 				continue
 			visited[next] = true
 			queue.append({"cell": next, "dist": dist + 1})
 	return result
+
+
+## Cardinal BFS of legal Boss anchors within move_range (footprint-validated).
+func get_reachable_boss_anchors(boss: Boss) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	if boss == null:
+		return result
+	var max_range: int = boss.move_range
+	var start: Vector2i = boss.anchor_cell
+	var visited: Dictionary = {}
+	var queue: Array = []
+	queue.append({"cell": start, "dist": 0})
+	visited[start] = true
+	var dirs: Array[Vector2i] = [
+		Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)
+	]
+	while not queue.is_empty():
+		var item: Dictionary = queue.pop_front()
+		var cell: Vector2i = item["cell"]
+		var dist: int = item["dist"]
+		if cell != start:
+			result.append(cell)
+		if dist >= max_range:
+			continue
+		for dir in dirs:
+			var next: Vector2i = cell + dir
+			if visited.has(next):
+				continue
+			if not can_boss_occupy_anchor(boss, next):
+				continue
+			visited[next] = true
+			queue.append({"cell": next, "dist": dist + 1})
+	return result
+
+
+## Among reachable cells, pick one minimizing Euclidean distance to target cell.
+func pick_move_toward_cell(unit: Unit, target_cell: Vector2i) -> Vector2i:
+	if unit == null:
+		return Vector2i.ZERO
+	var best: Vector2i = unit.grid_pos
+	var best_dist: float = BalanceConfig.grid_distance(unit.grid_pos, target_cell)
+	for cell in get_reachable_cells(unit):
+		var d: float = BalanceConfig.grid_distance(cell, target_cell)
+		if d < best_dist:
+			best_dist = d
+			best = cell
+	return best
+
+
+## Among reachable Boss anchors, minimize Euclidean distance from footprint to target.
+func pick_boss_anchor_toward(boss: Boss, target_cell: Vector2i) -> Vector2i:
+	if boss == null:
+		return Vector2i.ZERO
+	var best: Vector2i = boss.anchor_cell
+	var best_dist: float = BalanceConfig.distance_to_footprint(target_cell, boss.get_occupied_cells())
+	for anchor in get_reachable_boss_anchors(boss):
+		var footprint: Array[Vector2i] = BalanceConfig.footprint_2x2(anchor)
+		var d: float = BalanceConfig.distance_to_footprint(target_cell, footprint)
+		if d < best_dist:
+			best_dist = d
+			best = anchor
+	return best
 
 
 func get_attack_target_cells(attacker: Unit, enemies_only: bool = true) -> Array[Vector2i]:

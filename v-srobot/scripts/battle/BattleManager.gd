@@ -23,6 +23,7 @@ signal action_mode_changed(mode: ActionMode)
 signal combat_log_message(message: String)
 signal boss_telegraph_changed
 signal elite_telegraph_changed
+signal overload_warning_changed(active: bool)
 signal temporary_victory
 
 @export var grid_path: NodePath
@@ -44,6 +45,10 @@ var action_mode: ActionMode = ActionMode.NONE
 var round_number: int = 0
 var battle_over: bool = false
 var _highlight_cells: Array[Vector2i] = []
+
+var overload_warning_active: bool = false
+var overload_warning_shown: bool = false
+var overload_resolved: bool = false
 
 
 func _ready() -> void:
@@ -79,19 +84,13 @@ func _spawn_boss() -> void:
 
 
 func _spawn_placeholder_players() -> void:
-	var starts: Array[Vector2i] = [
-		Vector2i(1, 2),
-		Vector2i(1, 4),
-		Vector2i(1, 6),
-		Vector2i(2, 3),
-	]
 	var colors: Array[Color] = [
 		Color(0.25, 0.55, 0.95, 1),
 		Color(0.30, 0.75, 0.45, 1),
 		Color(0.90, 0.55, 0.25, 1),
 		Color(0.75, 0.35, 0.85, 1),
 	]
-	for i in starts.size():
+	for i in BalanceConfig.PLAYER_STARTS.size():
 		var unit := unit_scene.instantiate() as Unit
 		units_root.add_child(unit)
 		unit.setup("P%d" % (i + 1), "P%d" % (i + 1), colors[i])
@@ -103,8 +102,9 @@ func _spawn_placeholder_players() -> void:
 			BalanceConfig.PLAYER_ATTACK_RANGE,
 			CombatResolver.DamageType.PHYSICAL
 		)
-		if not grid.place_unit(unit, starts[i]):
-			push_error("Failed to place player at %s" % starts[i])
+		var start: Vector2i = BalanceConfig.PLAYER_STARTS[i]
+		if not grid.place_unit(unit, start):
+			push_error("Failed to place player at %s" % start)
 			continue
 		player_units.append(unit)
 
@@ -114,7 +114,7 @@ func _spawn_elites() -> void:
 		EliteEnemy.EliteKind.CONTROLLER,
 		"E1",
 		"Elite 1",
-		Color(0.85, 0.25, 0.25, 1),
+		Color(0.95, 0.45, 0.65, 1),
 		BalanceConfig.ELITE1_START
 	)
 	elite2 = _spawn_one_elite(
@@ -154,6 +154,26 @@ func _begin_round() -> void:
 		if is_instance_valid(unit):
 			unit.reset_round_actions()
 	_clear_selection()
+
+	# Round 5+: Enrage + unconditional Boss self-HP loss before Boss acts.
+	if round_number >= BalanceConfig.BOSS_ENRAGE_START_ROUND and is_boss_alive():
+		boss.enraged = true
+		var loss: Dictionary = CombatResolver.apply_unconditional_hp_loss(
+			boss, BalanceConfig.BOSS_ENRAGE_SELF_DAMAGE
+		)
+		if loss.get("ok", false):
+			_emit_log(
+				"ENRAGE: Boss loses %d HP at Round Start (now %d / %d)."
+				% [int(loss.get("dealt", 0)), boss.hp, boss.max_hp]
+			)
+			boss_telegraph_changed.emit()
+			if loss.get("died", false):
+				_handle_unit_death(boss)
+				if battle_over:
+					return
+
+	if battle_over:
+		return
 	_set_phase(Phase.BOSS_TURN)
 
 
@@ -164,10 +184,38 @@ func _set_phase(phase: Phase) -> void:
 		call_deferred("_run_boss_turn")
 	elif phase == Phase.PLAYER_PHASE:
 		_mark_imprisoned_seen_for_player_phase()
+		_maybe_show_overload_warning()
 	elif phase == Phase.ENEMY_PHASE:
 		call_deferred("_run_enemy_phase")
 	elif phase == Phase.ROUND_END:
 		call_deferred("_finish_round_end")
+
+
+func _maybe_show_overload_warning() -> void:
+	if overload_warning_shown:
+		return
+	if round_number != BalanceConfig.BOSS_OVERLOAD_WARNING_ROUND:
+		return
+	overload_warning_shown = true
+	overload_warning_active = true
+	_emit_log("WARNING — OVERLOAD NEXT ROUND")
+	overload_warning_changed.emit(true)
+	boss_telegraph_changed.emit()
+
+
+func _clear_overload_warning() -> void:
+	if not overload_warning_active:
+		return
+	overload_warning_active = false
+	overload_warning_changed.emit(false)
+
+
+func is_round4_overload() -> bool:
+	return (
+		round_number == BalanceConfig.BOSS_OVERLOAD_ROUND
+		and not overload_resolved
+		and is_boss_alive()
+	)
 
 
 func _mark_imprisoned_seen_for_player_phase() -> void:
@@ -179,16 +227,78 @@ func _mark_imprisoned_seen_for_player_phase() -> void:
 func _run_boss_turn() -> void:
 	if battle_over:
 		return
-	if boss == null or not is_instance_valid(boss) or boss.is_dead():
+	if not is_boss_alive():
+		_set_phase(Phase.PLAYER_PHASE)
+		return
+	_move_boss_toward_nearest_player()
+	if not is_boss_alive() or battle_over:
 		_set_phase(Phase.PLAYER_PHASE)
 		return
 	_execute_boss_action()
-	# Stance persists for the rest of this round; advances at ROUND_END.
 	boss_telegraph_changed.emit()
 	_set_phase(Phase.PLAYER_PHASE)
 
 
+func _move_boss_toward_nearest_player() -> void:
+	var target: Unit = _pick_nearest_living_player_to_boss()
+	if target == null:
+		_emit_log("Boss movement: no living players.")
+		return
+	var dest: Vector2i = grid.pick_boss_anchor_toward(boss, target.grid_pos)
+	if dest == boss.anchor_cell:
+		_emit_log("Boss stays at %s (nearest: %s)." % [str(boss.anchor_cell), target.display_name])
+		return
+	var from: Vector2i = boss.anchor_cell
+	if grid.move_boss(boss, dest):
+		_emit_log(
+			"Boss moves %s -> %s toward %s."
+			% [str(from), str(dest), target.display_name]
+		)
+		boss_telegraph_changed.emit()
+	else:
+		_emit_log("Boss movement failed toward %s." % target.display_name)
+
+
+func _pick_nearest_living_player_to_boss() -> Unit:
+	var living: Array[Unit] = _living_players()
+	if living.is_empty():
+		return null
+	var best_dist: float = INF
+	var tied: Array[Unit] = []
+	for unit in living:
+		var d: float = grid.distance_to_unit(unit.grid_pos, boss)
+		if d < best_dist:
+			best_dist = d
+			tied = [unit]
+		elif is_equal_approx(d, best_dist):
+			tied.append(unit)
+	return tied[randi() % tied.size()]
+
+
+func _pick_nearest_living_player_to_cell(from_cell: Vector2i) -> Unit:
+	var living: Array[Unit] = _living_players()
+	if living.is_empty():
+		return null
+	var best_dist: float = INF
+	var tied: Array[Unit] = []
+	for unit in living:
+		var d: float = BalanceConfig.grid_distance(from_cell, unit.grid_pos)
+		if d < best_dist:
+			best_dist = d
+			tied = [unit]
+		elif is_equal_approx(d, best_dist):
+			tied.append(unit)
+	return tied[randi() % tied.size()]
+
+
 func _execute_boss_action() -> void:
+	if is_round4_overload():
+		boss.is_overload_action = true
+		_boss_overload_action()
+		boss.is_overload_action = false
+		overload_resolved = true
+		_clear_overload_warning()
+		return
 	if boss.stance == Boss.StancePhase.PHASE_A:
 		_boss_phase_a_action()
 	else:
@@ -218,11 +328,7 @@ func _boss_phase_a_action() -> void:
 
 func _boss_phase_b_action() -> void:
 	_emit_log("Boss PHASE_B: Global Arcane Blast!")
-	# Snapshot list so deaths during the loop are safe.
-	var targets: Array[Unit] = []
-	for unit in player_units:
-		if is_instance_valid(unit) and not unit.is_dead():
-			targets.append(unit)
+	var targets: Array[Unit] = _living_players()
 	for target in targets:
 		var result: Dictionary = CombatResolver.apply_damage(
 			boss,
@@ -232,9 +338,49 @@ func _boss_phase_b_action() -> void:
 			grid
 		)
 		_apply_attack_result(boss, target, result, CombatResolver.DamageType.MAGICAL)
-		# Separate Burning application (once per living target; Water can block).
 		if is_instance_valid(target) and not target.is_dead():
 			_try_apply_burning(target, BalanceConfig.BURNING_APPLY_STACKS)
+
+
+func _boss_overload_action() -> void:
+	_emit_log("Boss OVERLOAD (Round 4 SPECIAL)!")
+	# 1) 10 MAG to all living players
+	var targets: Array[Unit] = _living_players()
+	for target in targets:
+		var result: Dictionary = CombatResolver.apply_damage(
+			boss,
+			target,
+			BalanceConfig.BOSS_OVERLOAD_DAMAGE,
+			CombatResolver.DamageType.MAGICAL,
+			grid
+		)
+		_apply_attack_result(boss, target, result, CombatResolver.DamageType.MAGICAL)
+		# 2) +4 Burning (Water can still block)
+		if is_instance_valid(target) and not target.is_dead():
+			_try_apply_burning(target, BalanceConfig.BOSS_OVERLOAD_BURNING_STACKS)
+	# 3-4) Terrain destruction AFTER damage/Burning
+	_destroy_random_terrain(GridManager.TerrainType.WATER, BalanceConfig.BOSS_OVERLOAD_TERRAIN_DESTROY_COUNT)
+	_destroy_random_terrain(GridManager.TerrainType.COVER, BalanceConfig.BOSS_OVERLOAD_TERRAIN_DESTROY_COUNT)
+	boss_telegraph_changed.emit()
+
+
+func _destroy_random_terrain(terrain: GridManager.TerrainType, max_count: int) -> void:
+	var label := "WATER" if terrain == GridManager.TerrainType.WATER else "COVER"
+	var cells: Array[Vector2i] = grid.get_cells_of_terrain(terrain)
+	if cells.is_empty():
+		_emit_log("Overload: no %s tiles to destroy." % label)
+		return
+	# Shuffle without replacement
+	for i in range(cells.size() - 1, 0, -1):
+		var j: int = randi() % (i + 1)
+		var tmp: Vector2i = cells[i]
+		cells[i] = cells[j]
+		cells[j] = tmp
+	var count: int = mini(max_count, cells.size())
+	for i in count:
+		var cell: Vector2i = cells[i]
+		if grid.destroy_terrain_to_normal(cell):
+			_emit_log("Overload destroys %s at %s -> NORMAL." % [label, str(cell)])
 
 
 func _run_enemy_phase() -> void:
@@ -282,6 +428,15 @@ func _elite1_imprison(elite: EliteEnemy) -> void:
 
 
 func _elite1_melee(elite: EliteEnemy) -> void:
+	# Move toward nearest living player, then attack if in melee range.
+	var chase: Unit = _pick_nearest_living_player_to_cell(elite.grid_pos)
+	if chase != null:
+		var dest: Vector2i = grid.pick_move_toward_cell(elite, chase.grid_pos)
+		if dest != elite.grid_pos:
+			var from: Vector2i = elite.grid_pos
+			if grid.move_unit(elite, dest):
+				_emit_log("%s moves %s -> %s toward %s." % [elite.display_name, str(from), str(dest), chase.display_name])
+				_handle_post_move_terrain(elite)
 	var candidates: Array[Unit] = []
 	for unit in player_units:
 		if not is_instance_valid(unit) or unit.is_dead():
@@ -310,10 +465,11 @@ func _elite2_act(elite: EliteEnemy) -> void:
 
 
 func _elite2_ranged(elite: EliteEnemy) -> void:
-	var target: Unit = _lowest_hp_living_player()
-	if target == null:
+	var living: Array[Unit] = _living_players()
+	if living.is_empty():
 		_emit_log("%s Arcane Shot: no living players." % elite.display_name)
 		return
+	var target: Unit = living[randi() % living.size()]
 	var result: Dictionary = CombatResolver.apply_damage(
 		elite,
 		target,
@@ -349,24 +505,13 @@ func _living_players() -> Array[Unit]:
 	return living
 
 
-func _lowest_hp_living_player() -> Unit:
-	var best: Unit = null
-	for unit in _living_players():
-		if best == null or unit.hp < best.hp:
-			best = unit
-	return best
-
-
 func _finish_round_end() -> void:
-	# 1-3) Burning DOT then stack decay (centralized).
 	_resolve_round_end_statuses()
-	# 4) Imprisoned expiry after one applicable PLAYER_PHASE
 	_resolve_imprisoned_expiry()
-	# 5-6) Existing ROUND_END cleanup + Boss stance flip
 	if is_boss_alive():
+		# After Round 4 SPECIAL (stance was PHASE_B), advance to PHASE_A for Round 5.
 		boss.advance_stance()
 		boss_telegraph_changed.emit()
-	# 7) Next round
 	_begin_round()
 
 
@@ -663,6 +808,9 @@ func action_mode_name() -> String:
 func _handle_post_move_terrain(unit: Unit) -> void:
 	if unit == null or not is_instance_valid(unit):
 		return
+	# Boss ignores Water cleanse/protection effects.
+	if unit.is_boss:
+		return
 	if not grid.is_water(unit.grid_pos):
 		return
 	var cleanse: Dictionary = StatusResolver.cleanse_burning(unit)
@@ -691,7 +839,6 @@ func _try_apply_burning(unit: Unit, stacks: int) -> void:
 
 
 func _resolve_round_end_statuses() -> void:
-	# Snapshot living units that may carry statuses.
 	var units: Array[Unit] = []
 	for unit in player_units:
 		if is_instance_valid(unit) and not unit.is_dead():
@@ -710,7 +857,6 @@ func _resolve_burning_tick(unit: Unit) -> void:
 	if stacks <= 0:
 		return
 	var burn_damage: int = stacks * BalanceConfig.BURNING_DAMAGE_PER_STACK
-	# Damage MUST resolve before stack reduction.
 	var result: Dictionary = CombatResolver.apply_damage(
 		null,
 		unit,
@@ -731,7 +877,6 @@ func _resolve_burning_tick(unit: Unit) -> void:
 			_emit_log("%s Burning: %d -> removed (unit died)." % [unit.display_name, stacks])
 			_handle_unit_death(unit)
 			return
-	# Then decay stacks by exactly 1.
 	var new_stacks: int = stacks - 1
 	if new_stacks <= 0:
 		unit.clear_burning()
@@ -749,3 +894,13 @@ func is_boss_alive() -> bool:
 
 func is_elite_alive(elite: EliteEnemy) -> bool:
 	return elite != null and is_instance_valid(elite) and not elite.is_dead()
+
+
+## Telegraph helpers for UI.
+func boss_current_is_overload() -> bool:
+	return is_round4_overload()
+
+
+func boss_next_is_overload() -> bool:
+	# During Round 3, next Boss action (Round 4) is OVERLOAD.
+	return round_number == BalanceConfig.BOSS_OVERLOAD_WARNING_ROUND and not overload_resolved

@@ -2,8 +2,8 @@ class_name EliteEnemy
 extends Unit
 
 enum EliteKind {
-	CONTROLLER, ## Elite 1
-	SUPPORT, ## Elite 2
+	CONTROLLER,
+	SUPPORT,
 }
 
 enum StancePhase {
@@ -20,7 +20,7 @@ func setup_elite(kind: EliteKind, id: String, label: String, color: Color, cell:
 	is_player = false
 	is_boss = false
 	stance = StancePhase.PHASE_A
-	move_range = 0
+	move_range = BalanceConfig.ELITE_MOVE_RANGE
 	setup(id, label, color)
 	match kind:
 		EliteKind.CONTROLLER:
@@ -66,7 +66,7 @@ func action_text_for(p_stance: StancePhase) -> String:
 		EliteKind.CONTROLLER:
 			if p_stance == StancePhase.PHASE_A:
 				return "Imprison (random player)"
-			return "Melee Strike (10 PHYS, range 1)"
+			return "Melee Strike (move then 10 PHYS)"
 		EliteKind.SUPPORT:
 			if p_stance == StancePhase.PHASE_A:
 				return "Arcane Shot (8 MAG, random player)"

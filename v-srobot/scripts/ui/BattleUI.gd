@@ -5,7 +5,9 @@ extends CanvasLayer
 
 @onready var round_label: Label = $Root/RightPanel/Margin/VBox/RoundLabel
 @onready var phase_label: Label = $Root/RightPanel/Margin/VBox/PhaseLabel
+@onready var warning_label: Label = $Root/RightPanel/Margin/VBox/WarningLabel
 @onready var boss_hp_label: Label = $Root/RightPanel/Margin/VBox/BossHpLabel
+@onready var boss_enrage_label: Label = $Root/RightPanel/Margin/VBox/BossEnrageLabel
 @onready var boss_current_label: Label = $Root/RightPanel/Margin/VBox/BossCurrentLabel
 @onready var boss_next_label: Label = $Root/RightPanel/Margin/VBox/BossNextLabel
 @onready var elite1_label: Label = $Root/RightPanel/Margin/VBox/Elite1Label
@@ -40,10 +42,12 @@ func _ready() -> void:
 	battle.combat_log_message.connect(_on_combat_log_message)
 	battle.boss_telegraph_changed.connect(_on_boss_telegraph_changed)
 	battle.elite_telegraph_changed.connect(_on_elite_telegraph_changed)
+	battle.overload_warning_changed.connect(_on_overload_warning_changed)
 	battle.temporary_victory.connect(_on_temporary_victory)
 	_refresh()
 	_refresh_boss_panel()
 	_refresh_elite_panel()
+	_refresh_warning()
 
 
 func _on_end_player_phase_pressed() -> void:
@@ -74,10 +78,13 @@ func _on_phase_changed(_phase: BattleManager.Phase) -> void:
 	_refresh()
 	_refresh_boss_panel()
 	_refresh_elite_panel()
+	_refresh_warning()
 
 
 func _on_round_changed(_round_number: int) -> void:
 	_refresh()
+	_refresh_boss_panel()
+	_refresh_warning()
 
 
 func _on_selection_changed(_unit: Unit) -> void:
@@ -103,12 +110,31 @@ func _on_elite_telegraph_changed() -> void:
 	_refresh_elite_panel()
 
 
+func _on_overload_warning_changed(_active: bool) -> void:
+	_refresh_warning()
+
+
 func _on_temporary_victory() -> void:
 	victory_label.visible = true
 	victory_label.text = "TEMPORARY VICTORY (prototype)"
 	_refresh()
 	_refresh_boss_panel()
 	_refresh_elite_panel()
+
+
+func _refresh_warning() -> void:
+	if battle.overload_warning_active:
+		warning_label.visible = true
+		warning_label.text = (
+			"WARNING — OVERLOAD NEXT ROUND\n"
+			+ "Next Boss attack:\n"
+			+ "• 10 Magical to all allies\n"
+			+ "• +4 Burning\n"
+			+ "• Water/Cover may be destroyed"
+		)
+	else:
+		warning_label.visible = false
+		warning_label.text = ""
 
 
 func _refresh() -> void:
@@ -156,22 +182,42 @@ func _refresh() -> void:
 func _refresh_boss_panel() -> void:
 	if not battle.is_boss_alive():
 		boss_hp_label.text = "Boss HP: defeated"
+		boss_enrage_label.visible = false
 		boss_current_label.text = "Current stance: -"
 		boss_next_label.text = "Next stance: -"
 		return
 	var b: Boss = battle.boss
 	boss_hp_label.text = "Boss HP: %d / %d" % [b.hp, b.max_hp]
+	if b.enraged:
+		boss_enrage_label.visible = true
+		boss_enrage_label.text = "BOSS ENRAGED\nActive dmg x1.5\n-20 HP at Round Start"
+	else:
+		boss_enrage_label.visible = false
+		boss_enrage_label.text = ""
+
+	var cur_overload := battle.boss_current_is_overload()
 	boss_current_label.text = "Current: %s\n%s\nAction: %s" % [
-		b.stance_title(b.stance),
-		b.immunity_text(b.stance),
-		b.action_text(b.stance),
+		b.stance_title(b.stance, cur_overload),
+		b.immunity_text(b.stance, cur_overload),
+		b.action_text(b.stance, cur_overload, b.enraged),
 	]
+
+	var next_overload := battle.boss_next_is_overload()
 	var nxt: Boss.StancePhase = b.next_stance()
-	boss_next_label.text = "Next (after ROUND_END): %s\n%s\nAction: %s" % [
-		b.stance_title(nxt),
-		b.immunity_text(nxt),
-		b.action_text(nxt),
-	]
+	# After Round 4 SPECIAL resolves, next is PHASE_A; during Round 4 show that.
+	var next_enraged := (
+		b.enraged
+		or battle.round_number + 1 >= BalanceConfig.BOSS_ENRAGE_START_ROUND
+	)
+	if next_overload:
+		boss_next_label.text = "Next: OVERLOAD\nImmune to Physical\nAction: 10 MAG AoE + 4 Burning + terrain destroy"
+	else:
+		boss_next_label.text = "Next (after ROUND_END): %s%s\n%s\nAction: %s" % [
+			b.stance_title(nxt, false),
+			" / ENRAGED" if next_enraged and not cur_overload else "",
+			b.immunity_text(nxt, false),
+			b.action_text(nxt, false, next_enraged and battle.round_number >= BalanceConfig.BOSS_OVERLOAD_ROUND),
+		]
 
 
 func _refresh_elite_panel() -> void:
