@@ -105,7 +105,7 @@ func action_text(p_stance: StancePhase = stance) -> String:
 		StancePhase.PHASE_A:
 			return "Heavy Physical Strike (15 PHYS, adjacent)"
 		StancePhase.PHASE_B:
-			return "Global Arcane Blast (8 MAG to all players)"
+			return "Global Arcane Blast (8 MAG + 3 Burning)"
 	return ""
 
 

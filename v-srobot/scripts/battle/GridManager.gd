@@ -3,13 +3,24 @@ extends Node2D
 
 signal cell_clicked(cell: Vector2i)
 
+enum TerrainType {
+	NORMAL,
+	WATER,
+	COVER,
+	OBSTACLE, ## reserved; movement-blocking later
+}
+
 const TILE_COLOR_A := Color(0.22, 0.24, 0.28, 1)
 const TILE_COLOR_B := Color(0.28, 0.30, 0.34, 1)
+const WATER_COLOR := Color(0.12, 0.42, 0.78, 1)
+const COVER_COLOR := Color(0.42, 0.55, 0.28, 1)
 const MOVE_HIGHLIGHT_COLOR := Color(0.25, 0.85, 0.45, 0.45)
 const ATTACK_HIGHLIGHT_COLOR := Color(0.95, 0.25, 0.2, 0.5)
 
 ## Authoritative occupancy: cell -> Unit (Boss maps four cells to one Unit)
 var occupancy: Dictionary = {}
+## Authoritative terrain: cell -> TerrainType
+var terrain_by_cell: Dictionary = {}
 
 var _tiles: Dictionary = {}
 var _highlights: Dictionary = {}
@@ -25,12 +36,15 @@ func _ready() -> void:
 	_highlight_layer.name = "HighlightLayer"
 	add_child(_highlight_layer)
 	_build_grid()
+	_apply_test_water()
+	_apply_test_cover()
 
 
 func _build_grid() -> void:
 	for y in BalanceConfig.GRID_ROWS:
 		for x in BalanceConfig.GRID_COLUMNS:
 			var cell := Vector2i(x, y)
+			terrain_by_cell[cell] = TerrainType.NORMAL
 			var tile := ColorRect.new()
 			tile.size = Vector2(BalanceConfig.TILE_SIZE - 2, BalanceConfig.TILE_SIZE - 2)
 			tile.position = BalanceConfig.grid_to_world_top_left(cell) + Vector2(1, 1)
@@ -39,6 +53,61 @@ func _build_grid() -> void:
 			tile.color = TILE_COLOR_A if checker else TILE_COLOR_B
 			_tile_layer.add_child(tile)
 			_tiles[cell] = tile
+
+
+func _apply_test_water() -> void:
+	for cell in BalanceConfig.TEST_WATER_CELLS:
+		set_terrain(cell, TerrainType.WATER)
+
+
+func _apply_test_cover() -> void:
+	for cell in BalanceConfig.TEST_COVER_CELLS:
+		set_terrain(cell, TerrainType.COVER)
+
+
+func set_terrain(cell: Vector2i, terrain: TerrainType) -> void:
+	if not is_in_bounds(cell):
+		return
+	terrain_by_cell[cell] = terrain
+	_refresh_tile_visual(cell)
+
+
+func get_terrain(cell: Vector2i) -> TerrainType:
+	return int(terrain_by_cell.get(cell, TerrainType.NORMAL)) as TerrainType
+
+
+func is_water(cell: Vector2i) -> bool:
+	return get_terrain(cell) == TerrainType.WATER
+
+
+func is_cover(cell: Vector2i) -> bool:
+	return get_terrain(cell) == TerrainType.COVER
+
+
+func terrain_name(cell: Vector2i) -> String:
+	match get_terrain(cell):
+		TerrainType.WATER:
+			return "WATER"
+		TerrainType.COVER:
+			return "COVER"
+		TerrainType.OBSTACLE:
+			return "OBSTACLE"
+		_:
+			return "NORMAL"
+
+
+func _refresh_tile_visual(cell: Vector2i) -> void:
+	if not _tiles.has(cell):
+		return
+	var tile: ColorRect = _tiles[cell]
+	match get_terrain(cell):
+		TerrainType.WATER:
+			tile.color = WATER_COLOR
+		TerrainType.COVER:
+			tile.color = COVER_COLOR
+		_:
+			var checker: bool = ((cell.x + cell.y) % 2) == 0
+			tile.color = TILE_COLOR_A if checker else TILE_COLOR_B
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -77,7 +146,6 @@ func place_unit(unit: Unit, cell: Vector2i) -> bool:
 	return true
 
 
-## Places one logical Boss across four cells. All cells reference the same Unit.
 func place_boss(boss: Unit, anchor: Vector2i) -> bool:
 	var cells: Array[Vector2i] = BalanceConfig.footprint_2x2(anchor)
 	for cell in cells:
@@ -121,17 +189,13 @@ func remove_unit(unit: Unit) -> void:
 		occupancy.erase(cell)
 
 
-## Minimum Chebyshev distance from a cell to a unit footprint.
-func distance_to_unit(from_cell: Vector2i, unit: Unit) -> int:
+## Minimum Euclidean distance to a unit footprint (range checks only).
+func distance_to_unit(from_cell: Vector2i, unit: Unit) -> float:
 	if unit == null:
-		return 999999
-	var best: int = 999999
-	for cell in unit.get_occupied_cells():
-		best = mini(best, BalanceConfig.chebyshev_distance(from_cell, cell))
-	return best
+		return INF
+	return BalanceConfig.distance_to_footprint(from_cell, unit.get_occupied_cells())
 
 
-## 4-neighbor BFS. Occupied tiles are blocked except the mover's current cell.
 func get_reachable_cells(unit: Unit) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 	if unit == null:
@@ -166,7 +230,6 @@ func get_reachable_cells(unit: Unit) -> Array[Vector2i]:
 	return result
 
 
-## Attack highlights. Boss footprint tiles are all highlighted but resolve to one unit.
 func get_attack_target_cells(attacker: Unit, enemies_only: bool = true) -> Array[Vector2i]:
 	var result: Array[Vector2i] = []
 	if attacker == null:
@@ -182,10 +245,9 @@ func get_attack_target_cells(attacker: Unit, enemies_only: bool = true) -> Array
 			continue
 		if seen_units.has(other):
 			continue
-		if distance_to_unit(attacker.grid_pos, other) > attacker.attack_range:
+		if distance_to_unit(attacker.grid_pos, other) > float(attacker.attack_range):
 			continue
 		seen_units[other] = true
-		# Include every occupied cell so multi-tile units show full footprint.
 		for occ in other.get_occupied_cells():
 			result.append(occ)
 	return result

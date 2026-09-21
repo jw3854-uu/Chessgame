@@ -1,10 +1,11 @@
-[gd_scene load_steps=6 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://scripts/battle/GridManager.gd" id="1_grid"]
 [ext_resource type="Script" path="res://scripts/battle/BattleManager.gd" id="2_battle"]
 [ext_resource type="Script" path="res://scripts/ui/BattleUI.gd" id="3_ui"]
 [ext_resource type="PackedScene" path="res://scenes/units/Unit.tscn" id="4_unit"]
 [ext_resource type="PackedScene" path="res://scenes/units/Boss.tscn" id="5_boss"]
+[ext_resource type="PackedScene" path="res://scenes/units/EliteEnemy.tscn" id="6_elite"]
 
 [node name="Battle" type="Node2D"]
 
@@ -25,91 +26,147 @@ grid_path = NodePath("../GridManager")
 units_path = NodePath("../Units")
 unit_scene = ExtResource("4_unit")
 boss_scene = ExtResource("5_boss")
+elite_scene = ExtResource("6_elite")
 
 [node name="BattleUI" type="CanvasLayer" parent="."]
 script = ExtResource("3_ui")
 battle_manager_path = NodePath("../BattleManager")
 
-[node name="Panel" type="PanelContainer" parent="BattleUI"]
-offset_left = 12.0
-offset_top = 12.0
-offset_right = 430.0
-offset_bottom = 280.0
+[node name="Root" type="Control" parent="BattleUI"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
 
-[node name="VBox" type="VBoxContainer" parent="BattleUI/Panel"]
+[node name="RightPanel" type="PanelContainer" parent="BattleUI/Root"]
+layout_mode = 1
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -360.0
+grow_horizontal = 0
+grow_vertical = 2
+
+[node name="Margin" type="MarginContainer" parent="BattleUI/Root/RightPanel"]
 layout_mode = 2
+theme_override_constants/margin_left = 12
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 12
+theme_override_constants/margin_bottom = 12
 
-[node name="RoundLabel" type="Label" parent="BattleUI/Panel/VBox"]
+[node name="VBox" type="VBoxContainer" parent="BattleUI/Root/RightPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="HeaderLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Combat Panel"
+
+[node name="RoundLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "Round: 0"
 
-[node name="PhaseLabel" type="Label" parent="BattleUI/Panel/VBox"]
+[node name="PhaseLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
 layout_mode = 2
 text = "Phase: -"
 
-[node name="SelectionLabel" type="Label" parent="BattleUI/Panel/VBox"]
-layout_mode = 2
-autowrap_mode = 2
-text = "Selected: none"
-
-[node name="ModeLabel" type="Label" parent="BattleUI/Panel/VBox"]
-layout_mode = 2
-text = "Mode: NONE"
-
-[node name="CombatLogLabel" type="Label" parent="BattleUI/Panel/VBox"]
-layout_mode = 2
-autowrap_mode = 2
-text = "Combat: -"
-
-[node name="ActionRow" type="HBoxContainer" parent="BattleUI/Panel/VBox"]
+[node name="Sep1" type="HSeparator" parent="BattleUI/Root/RightPanel/Margin/VBox"]
 layout_mode = 2
 
-[node name="MoveButton" type="Button" parent="BattleUI/Panel/VBox/ActionRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Move"
-
-[node name="PhysAttackButton" type="Button" parent="BattleUI/Panel/VBox/ActionRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Phys 8"
-
-[node name="MagicAttackButton" type="Button" parent="BattleUI/Panel/VBox/ActionRow"]
-layout_mode = 2
-size_flags_horizontal = 3
-text = "Magic 8"
-
-[node name="EndPlayerPhaseButton" type="Button" parent="BattleUI/Panel/VBox"]
-layout_mode = 2
-text = "End Player Phase"
-
-[node name="BossPanel" type="PanelContainer" parent="BattleUI"]
-offset_left = 450.0
-offset_top = 12.0
-offset_right = 980.0
-offset_bottom = 180.0
-
-[node name="VBox" type="VBoxContainer" parent="BattleUI/BossPanel"]
-layout_mode = 2
-
-[node name="BossHpLabel" type="Label" parent="BattleUI/BossPanel/VBox"]
+[node name="BossHpLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
 text = "Boss HP: -"
 
-[node name="BossCurrentLabel" type="Label" parent="BattleUI/BossPanel/VBox"]
+[node name="BossCurrentLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
 layout_mode = 2
-autowrap_mode = 2
+autowrap_mode = 3
 text = "Current: -"
 
-[node name="BossNextLabel" type="Label" parent="BattleUI/BossPanel/VBox"]
+[node name="BossNextLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
 layout_mode = 2
-autowrap_mode = 2
+autowrap_mode = 3
 text = "Next: -"
 
-[node name="VictoryLabel" type="Label" parent="BattleUI/BossPanel/VBox"]
+[node name="VictoryLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
 visible = false
 layout_mode = 2
 theme_override_colors/font_color = Color(1, 0.85, 0.2, 1)
 text = "TEMPORARY VICTORY (prototype)"
+
+[node name="SepElite" type="HSeparator" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Elite1Label" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Elite 1: -"
+
+[node name="Elite2Label" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Elite 2: -"
+
+[node name="Sep2" type="HSeparator" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="SelectionLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Selected: none"
+
+[node name="StatusLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+autowrap_mode = 3
+text = "Statuses: -"
+
+[node name="ModeLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+text = "Mode: NONE"
+
+[node name="ActionRow" type="HBoxContainer" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="MoveButton" type="Button" parent="BattleUI/Root/RightPanel/Margin/VBox/ActionRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Move"
+
+[node name="PhysAttackButton" type="Button" parent="BattleUI/Root/RightPanel/Margin/VBox/ActionRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Phys 8"
+
+[node name="MagicAttackButton" type="Button" parent="BattleUI/Root/RightPanel/Margin/VBox/ActionRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "Magic 8"
+
+[node name="TestRow" type="HBoxContainer" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="TestShieldButton" type="Button" parent="BattleUI/Root/RightPanel/Margin/VBox/TestRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "TEST +5 SHIELD"
+
+[node name="TestHolyButton" type="Button" parent="BattleUI/Root/RightPanel/Margin/VBox/TestRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "TEST HOLY SHIELD"
+
+[node name="CombatLogLabel" type="Label" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+autowrap_mode = 3
+text = "Log: -"
+
+[node name="EndPlayerPhaseButton" type="Button" parent="BattleUI/Root/RightPanel/Margin/VBox"]
+layout_mode = 2
+text = "End Player Phase"
